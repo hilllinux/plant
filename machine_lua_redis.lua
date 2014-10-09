@@ -10,8 +10,11 @@ function mysql_query(sql_statement)
         local mysql = require "resty.mysql"
         local db, err = mysql:new()
         if not db then return nil end
+        db:set_timeout(1000)
 
         -- connect pool
+        ngx.log(ngx.DEBUG, "mysql query"..sql_statement)
+
         local ok, err, errno, sqlstate = db:connect {
             host = "127.0.0.1",
             port = 3306,
@@ -34,18 +37,19 @@ function mysql_query(sql_statement)
 
         return res
 end
+
 function get_mac_with_plant_id(pid,redis)
     local mac_address,err = redis:get('mac_'..pid)
 
     if mac_address == ngx.null then
 
-        ngx.log(ngx.DEBUG, "mac not find in memory so get it from mysql !")
+        ngx.log(ngx.DEBUG, "mac_"..pid.." not find in memory so get it from mysql !")
 
         local sql_statement = "select planter_code from tp_planter where planter_id = "..pid
         local res = mysql_query(sql_statement)
 
         if (not res) or (res[1] == nil) then
-            ngx.log(ngx.ERR, "mac not find in mysql with pid !")
+            ngx.log(ngx.ERR, "mac not find in mysql with pid"..pid.." !")
             return nil 
         end
 
@@ -64,7 +68,7 @@ function get_pid_with_mac_address(mac_address)
     local res = mysql_query(sql_statement)
 
     if (not res) or (res[1] == nil) then
-        ngx.log(ngx.WARN, "mac not find in mysql,you need create it !")
+        ngx.log(ngx.WARN, "mac: "..mac_address.."not find in mysql,you need create it !")
         return nil
     end
 
@@ -89,10 +93,24 @@ function parse_command(command_source)
     return commad_parese_table
 end
 
-function create_command_string(pid, cmd_table)
+function create_command_string(cmd_table)
 --local out_str = string.format("PID=%0.10d&"..command_in_memory, tonumber(planter_id))
 --    local cmd_defalut = "GPIO=111111&T1=0005&T2=0010&T3=2000&ADC1=100&ADC2=200&ADC3=600&ADC4=00600&ADC5=0&MD=0END"
-      return string.format("PID=%0.10d&GPIO=%s&")
+      local out_string = string.format("PID=%0.10d", tonumber(cmd_table["PID"]))
+      out_string = out_string.."&GPIO="..cmd_table["GPIO"]
+      out_string = out_string.."&T1="..cmd_table["T1"]
+      out_string = out_string.."&T2="..cmd_table["T2"]
+      out_string = out_string.."&T3="..cmd_table["T3"]
+      out_string = out_string.."&ADC1="..cmd_table["ADC1"]
+      out_string = out_string.."&ADC2="..cmd_table["ADC2"]
+      out_string = out_string.."&ADC3="..cmd_table["ADC3"]
+      out_string = out_string.."&ADC4="..cmd_table["ADC4"]
+      out_string = out_string.."&ADC5="..cmd_table["ADC5"]
+      out_string = out_string.."&MD="..cmd_table["MD"]
+      out_string = out_string.."END"
+
+      ngx.log(ngx.DEBUG, "out_string:"..out_string)
+      return out_string
 end
 
 function is_md5_check_vaild(value,sign_to_compare)
@@ -123,7 +141,7 @@ end
 local planter_id  = ngx.var.arg_pid
 local sign        = ngx.var.arg_sign
 local mac_addr    = ngx.var.arg_mac
-local cmd_defalut = "GPIO=111111&T1=0005&T2=0010&T3=2000&ADC1=100&ADC2=200&ADC3=600&ADC4=00600&ADC5=0&MD=0END"
+local cmd_defalut = "GPIO=011111&T1=0005&T2=0010&T3=2000&ADC1=100&ADC2=200&ADC3=600&ADC4=00600&ADC5=0&MD=0END"
 local cmd_not_def = "GPIO=011111&T1=0005&T2=0010&T3=2000&ADC1=100&ADC2=200&ADC3=600&ADC4=00600&ADC5=0&MD=0END"
 
 -- check if planter_id or sign is exists?
@@ -134,7 +152,7 @@ end
 
 local redis = require "resty.redis"
 local red = redis:new()
---red:set_timeout(1000) -- 1 sec 
+red:set_timeout(1000) -- 1 sec 
 local ok, err = red:connect("127.0.0.1", 6379)
 if not ok then
     ngx.log(ngx.ERR, "redis connect failed!")
@@ -161,6 +179,7 @@ if mac_addr and (tonumber(planter_id) == 0) then
     local out_str = string.format("PID=%0.10d&"..cmd_defalut, tonumber(planter_id))
     ngx.say(out_str)
 
+    ngx.log(ngx.DEBUG, "process 0 done with pid "..planter_id.."inited to client")
     return
 end
 
@@ -230,54 +249,63 @@ local command_in_memory,err = red:get('command_'..planter_id)
 
 if command_in_memory == ngx.null then
     -- default command if command not exists in memory
-    --ngx.say('not in memory')
     ngx.log(ngx.ERR, "command not in memory")
     local out_str = string.format("PID=%0.10d&"..cmd_not_def, tonumber(planter_id))
     ngx.say(out_str)
     return 
 end
 
-command_in_memory  =  cmd_defalut
+-- for test
+-- command_in_memory  =  cmd_defalut
 
-local command_parase_result = parse_command(command_in_memory)
-local manual_option         = tonumber(string.sub(command_parase_result['MD'],0,1))
 
-local light_threshhold      = tonumber(command_parase_result['ADC4'])
+local command_parse_result  = parse_command(command_in_memory)
+local manual_option         = tonumber(string.sub(command_parse_result['MD'],0,1))
+local light_threshhold      = tonumber(command_parse_result['ADC4'])
 local light_current         = tonumber(status_args['ADC4'])
 local light_total,err       = red:get("light_total_"..planter_id)
 local increase_time,err     = red:get("time_interval")
 
-if increase_time == ngx.null then increase_time = 2 end
-if light_total   == ngx.null then light_total   = 0 end
+if increase_time == ngx.null then
+    ngx.log(ngx.WARN, "time_interval is not set")
+    increase_time = 2 
+end
 
+if light_total == ngx.null then
+    ngx.log(ngx.WARN, "pid: "..planter_id.." light total is not set memory")
+    light_total = 0 
+end
 
 -- increase light time
 if light_threshhold < light_current then
-    ngx.log(ngx.DEBUG, "light calc process")
+    ngx.log(ngx.DEBUG, "pid : "..planter_id.."light time increas"..increase_time)
     res:incrby("light_time_"..planter_id, tonumber(increase_time))
 end
 
--- manual mode, just send the command in memory
-if manual_option == 1 then 
-    ngx.log(ngx.DEBUG, "manual control")
-    local out_str = string.format("PID=%0.10d&"..command_in_memory, tonumber(planter_id))
-    --local out_str = create_command_string(planter_id, command_in_memory, increase_time)
-    ngx.say(out_str)
-    return
-end
+-- change command table
+command_parse_result["PID"]= planter_id
+command_parse_result["T3"] = string.format("%0.4d",increase_time)
+command_parse_result["MD"] = manual_option
+
 
 -- auto mode 
-ngx.log(ngx.DEBUG, "auto mode")
 local current_hour = tonumber(os.date("%H"))
 local light_time,err   = red:get("light_time_"..planter_id)
-if light_time == ngx.null then light_time = 0 end
+if light_time == ngx.null then
+    ngx.log(ngx.WARN, "can't get light_time_"..planter_id)
+    light_time = 0 
+end
 
 
-if (current_hour > 18) and (light_time < light_total) then
-    local out_str = string.format("PID=%0.10d&"..command_in_memory, tonumber(planter_id))
+if (manual_option == 0) and (current_hour > 18) and (light_time < light_total) then
+    ngx.log(ngx.DEBUG, "auto mode")
+    command_parse_result["GPIO"] = "1"..string.sub(command_parse_result["GPIO"],1)
+    local out_str = create_command_string(command_parse_result)
     ngx.say(out_str)
 else
-    local out_str = string.format("PID=%0.10d&"..command_in_memory, tonumber(planter_id))
+    -- manual mode, just send the command in memory
+    ngx.log(ngx.DEBUG, "manual control")
+    local out_str = create_command_string(command_parse_result)
     ngx.say(out_str)
 end
 
