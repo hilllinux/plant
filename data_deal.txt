@@ -1,0 +1,29 @@
+第一次发送: plant.pandorabox.mobi/?pid=0&mac=1231231&sign=8bb3a85197b264d094ada49af1632127
+注意，若没有获取到服务器的返回，持续发送该请求；
+
+正常发送:
+plant.pandorabox.mobi/?pid=1&IO=101000&ADC1=100&ADC2=144&ADC3=152&ADC4=381&ADC5=0&sign=8bb3a85197b264d094ada49af1632127
+
+服务器返回格式：
+PID=0000000001&GPIO=111111&T1=0005&T2=0010&T3=2000&ADC1=100&ADC2=1734&ADC3=69&ADC4=0&ADC5=0&MD=0END
+值得注意的是：ADC0~5 和 T1~3 的数据长度需要 lanxiaoke 那边确定给我。我返回固定长度
+
+md5加密格式约定：(具体数值实际情况而定, md5 生成 hash 时包含间隔的冒号)
+ADC1,100,ADC2,144,ADC3,152,ADC4,381,ADC5,0,IO,101000,pid,1,mac,ASJDKLFJSKLFS18912890
+
+种植机器返回的状态信息:
+status_planterID 
+
+PHP后台下达的命令信息:
+command_planterID
+
+mac地址，加密校验用:
+mac_planterID
+
+光照时常:
+light_time_planterID
+
+光照所需时常:
+light_time_total_planterID ? 还没和jiangwei确定
+
+
