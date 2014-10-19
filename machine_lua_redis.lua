@@ -131,7 +131,7 @@ function is_md5_check_vaild(value,sign_to_compare)
     local sign_lower = string.lower(sign_to_compare)
 
     if not (md5_result == sign_lower) then
-        ngx.log(ngx.WARN,"md5 check sum failed!")
+        ngx.log(ngx.WARN,"value: "..value..",md5:"..md5_result.."; check sum failed!")
         return false
     end
 
@@ -142,13 +142,15 @@ local planter_id  = ngx.var.arg_pid
 local sign        = ngx.var.arg_sign
 local mac_addr    = ngx.var.arg_mac
 local cmd_defalut = "GPIO=011111&T1=0005&T2=0010&T3=2000&ADC1=100&ADC2=200&ADC3=600&ADC4=00600&ADC5=0&MD=0END"
-local cmd_not_def = "GPIO=011111&T1=0005&T2=0010&T3=2000&ADC1=100&ADC2=200&ADC3=600&ADC4=00600&ADC5=0&MD=0END"
+local params_limit= 8
+--local cmd_not_def = "GPIO=011111&T1=0005&T2=0010&T3=2000&ADC1=100&ADC2=200&ADC3=600&ADC4=00600&ADC5=0&MD=0END"
 
 -- check if planter_id or sign is exists?
 if (not sign) or (not planter_id) then
     ngx.log(ngx.DEBUG,"query without sign and pid!")
     ngx.exit(400) 
 end
+
 
 local redis = require "resty.redis"
 local red = redis:new()
@@ -166,9 +168,12 @@ end
 
 -- if get mac_addr from plant_machine and pid equls to 0
 -- it means the first connect from the machine
+planter_id = tonumber(planter_id)
+if planter_id == 0 then
+    if type(mac_addr) ~= "string" then ngx.exit(400) end -- mac_address not exists!!
 
-if mac_addr and (tonumber(planter_id) == 0) then
-    ngx.log(ngx.DEBUG, "process 0")
+    ngx.log(ngx.DEBUG, "process 0 "..type(mac_address))
+
     planter_id = get_pid_with_mac_address(mac_addr)
 
     if not planter_id then 
@@ -179,7 +184,7 @@ if mac_addr and (tonumber(planter_id) == 0) then
     local out_str = string.format("PID=%0.10d&"..cmd_defalut, tonumber(planter_id))
     ngx.say(out_str)
 
-    ngx.log(ngx.DEBUG, "process 0 done with pid "..planter_id.."inited to client")
+    ngx.log(ngx.DEBUG, "process 0 done with pid "..planter_id.." inited to client")
     return
 end
 
@@ -193,27 +198,53 @@ local status_args    = ngx.req.get_uri_args() -- get GET params in table
 local key_table = {}  
 local status_json_table = {}
 -- sort the GET Params
+local params_counter = 0
 for key,_ in pairs(status_args) do  
     table.insert(key_table,key)  
+    if type(_) == "boolean" then
+        ngx.log(ngx.DEBUG,"planter_id :"..planter_id.." machine get param error!")
+        ngx.exit(400)
+    end
+    params_counter = params_counter + 1
 end  
 table.sort(key_table)
+ngx.log(ngx.DEBUG,"planter_id : "..planter_id.." params counter: "..params_counter)
+
+if params_counter ~= params_limit then
+    ngx.log(ngx.DEBUG,"planter_id :"..planter_id.." param num wrong!")
+    ngx.exit(400)
+end
+--pid=0000002004&IO=011111&ADC1=100&ADC2=0&ADC3=74&ADC4=0&ADC5=0&sign=ae4cf8c7b188ec77a2ec251200d23962
+--pid=1&IO=101000&ADC1=100&ADC2=144&ADC3=152&ADC4=381&ADC5=0&sign=8bb3a85197b264d094ada49af1632127
+
 -- create value for md5 check and create status_table for json encode
+--[[
+local cjson = require "cjson"
+local jsonString = cjson.encode(status_args)
+ngx.log(ngx.DEBUG,"planter_id :"..planter_id..";size: "..params_counter.."; content = "..jsonString)
+]]--
+
+
+
+-- get mac_address of planter_id
+-- salt for md5 check sum
+local mac = get_mac_with_plant_id(tonumber(planter_id),red)
+if not mac then ngx.exit(400) end
+
+-- md5 check process
+-- format : ADC1,100,ADC2,1734,ADC3,74,ADC4,0,ADC5,0,IO,011111,pid,0000002004,mac,001fa880740b
 local value_for_md5_check = ''
 for _,key in pairs(key_table) do
     -- sign is for compare
+    -- not in format list
     if not (key == 'sign') then
         value_for_md5_check = value_for_md5_check..key..','..status_args[key]..','
     end
-
     -- remove sign and pid from status table for saving memory
     if not ( (key == 'sign') or (key == 'pid') ) then
         status_json_table[key] = status_args[key]
     end
 end
-
--- get mac_address of planter_id
-local mac = get_mac_with_plant_id(planter_id,red)
-if not mac then ngx.exit(400) end
 
 -- add mac address to md5 check sum
 value_for_md5_check = value_for_md5_check..'mac'..','..mac
@@ -227,12 +258,11 @@ if not is_md5_check_vaild(value_for_md5_check, sign) then ngx.exit(400) end
 -- store the status in memory if md5 check is vaild
 --
 
-ngx.log(ngx.DEBUG, "process 2: store")
 -- add systime to status_table
 status_json_table['time'] = os.time()
 -- create status  json 
 local cjson = require "cjson"
-jsonString = cjson.encode(status_json_table)
+local jsonString = cjson.encode(status_json_table)
 -- write status json formate to memory
 local ok,err = red:set('status_'..planter_id, jsonString)
 
@@ -244,20 +274,14 @@ local ok,err = red:set('status_'..planter_id, jsonString)
 
 
 -- get command from memory
-ngx.log(ngx.DEBUG, "process 3: set command")
 local command_in_memory,err = red:get('command_'..planter_id)
 
 if command_in_memory == ngx.null then
     -- default command if command not exists in memory
-    ngx.log(ngx.ERR, "command not in memory")
-    local out_str = string.format("PID=%0.10d&"..cmd_not_def, tonumber(planter_id))
-    ngx.say(out_str)
-    return 
+    ngx.log(ngx.WARN, "command not in memory")
+    command_in_memory = cmd_defalut
+    red:set("command_"..planter_id,command_in_memory)
 end
-
--- for test
--- command_in_memory  =  cmd_defalut
-
 
 local command_parse_result  = parse_command(command_in_memory)
 local manual_option         = tonumber(string.sub(command_parse_result['MD'],0,1))
@@ -268,12 +292,14 @@ local increase_time,err     = red:get("time_interval")
 
 if increase_time == ngx.null then
     ngx.log(ngx.WARN, "time_interval is not set")
+    red:set("time_interval",2)
     increase_time = 2 
 end
 
 if light_total == ngx.null then
     ngx.log(ngx.WARN, "pid: "..planter_id.." light total is not set memory")
     light_total = 0 
+    red:set("light_total_"..planter_id, 0)
 end
 
 -- increase light time
@@ -294,19 +320,20 @@ local light_time,err   = red:get("light_time_"..planter_id)
 if light_time == ngx.null then
     ngx.log(ngx.WARN, "can't get light_time_"..planter_id)
     light_time = 0 
+    red:set("light_time_"..planter_id, 0)
 end
 
+local ok, err = red:set_keepalive(10000, 100)
 
 if (manual_option == 0) and (current_hour > 18) and (light_time < light_total) then
-    ngx.log(ngx.DEBUG, "auto mode")
+    ngx.log(ngx.DEBUG, "set light on")
     command_parse_result["GPIO"] = "1"..string.sub(command_parse_result["GPIO"],1)
     local out_str = create_command_string(command_parse_result)
     ngx.say(out_str)
 else
     -- manual mode, just send the command in memory
-    ngx.log(ngx.DEBUG, "manual control")
+    ngx.log(ngx.DEBUG, "normal command send")
     local out_str = create_command_string(command_parse_result)
     ngx.say(out_str)
 end
-
 
