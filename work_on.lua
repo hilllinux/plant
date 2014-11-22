@@ -96,6 +96,15 @@ end
 function create_command_string(cmd_table)
 --local out_str = string.format("PID=%0.10d&"..command_in_memory, tonumber(planter_id))
 --    local cmd_defalut = "GPIO=111111&T1=0005&T2=0010&T3=2000&ADC1=100&ADC2=200&ADC3=600&ADC4=00600&ADC5=0&MD=0END"
+      if cmd_table['GPIO'] == nil then cmd_table['GPIO'] = "010000" end
+      if cmd_table['T1']   == nil then cmd_table['T1'] = "0005"     end
+      if cmd_table['T2']   == nil then cmd_table['T2'] = "0010"     end
+      if cmd_table['ADC1'] == nil then cmd_table['ADC1'] = 100      end
+      if cmd_table['ADC2'] == nil then cmd_table['ADC2'] = 200      end
+      if cmd_table['ADC3'] == nil then cmd_table['ADC3'] = 600      end
+      if cmd_table['ADC4'] == nil then cmd_table['ADC4'] = "00600"  end
+      if cmd_table['ADC5'] == nil then cmd_table['ADC5'] = 0        end
+
       local out_string = string.format("PID=%0.10d", tonumber(cmd_table["PID"]))
       out_string = out_string.."&GPIO="..cmd_table["GPIO"]
       out_string = out_string.."&T1="..cmd_table["T1"]
@@ -289,9 +298,6 @@ end
 
 local command_parse_result  = parse_command(command_in_memory)
 local manual_option         = tonumber(string.sub(command_parse_result['MD'],0,1))
-local light_threshhold      = tonumber(command_parse_result['ADC4'])
-local light_current         = tonumber(status_args['ADC4'])
-local light_total,err       = red:get("light_total_"..planter_id)
 local increase_time,err     = red:get("time_interval")
 
 if increase_time == ngx.null then
@@ -300,45 +306,14 @@ if increase_time == ngx.null then
     increase_time = 2000 
 end
 
-if light_total == ngx.null then
-    ngx.log(ngx.WARN, "pid: "..planter_id.." light total is not set memory")
-    light_total = 0 
-    red:set("light_total_"..planter_id, 0)
-end
-
--- increase light time
-if light_threshhold < light_current then
-    ngx.log(ngx.DEBUG, "pid : "..planter_id.."light time increas"..increase_time)
-    red:incrby("light_time_"..planter_id, tonumber(increase_time))
-end
 
 -- change command table
 command_parse_result["PID"]= planter_id
 command_parse_result["T3"] = string.format("%0.4d",increase_time)
 command_parse_result["MD"] = manual_option
 
-
--- auto mode 
-local current_hour = tonumber(os.date("%H"))
-local light_time,err   = red:get("light_time_"..planter_id)
-if light_time == ngx.null then
-    ngx.log(ngx.WARN, "can't get light_time_"..planter_id)
-    light_time = 0 
-    red:set("light_time_"..planter_id, 0)
-end
-
 local ok, err = red:set_keepalive(10000, 100)
 
-if (manual_option == 0) and (current_hour > 18) and (light_time < light_total) then
-    ngx.log(ngx.DEBUG, "set light on")
-    local gpio_content = command_parse_result["GPIO"]
-    command_parse_result["GPIO"] = string.sub(gpio_content,1,1)..'1'..string.sub(gpio_content,3,#gpio_content)
-    local out_str = create_command_string(command_parse_result)
-    ngx.say(out_str)
-else
-    -- manual mode, just send the command in memory
-    ngx.log(ngx.DEBUG, "normal command send")
-    local out_str = create_command_string(command_parse_result)
-    ngx.say(out_str)
-end
+local out_str = create_command_string(command_parse_result)
+ngx.say(out_str)
 
