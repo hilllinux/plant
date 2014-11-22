@@ -1,0 +1,10 @@
+/var/www/redis/*.log {
+daily
+rotate 10
+copytruncate
+delaycompress
+compress
+notifempty
+missingok
+create 0660 www www
+}
