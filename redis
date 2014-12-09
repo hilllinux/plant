@@ -17,6 +17,7 @@ DAEMON_ARGS=/etc/redis.conf
 NAME=redis-server
 DESC=redis-server
 PIDFILE=/var/run/redis.pid
+USER=www
 
 test -x $DAEMON || exit 0
 
@@ -26,8 +27,8 @@ case "$1" in
   start)
 	echo -n "Starting $DESC: "
 	touch $PIDFILE
-	chown www:www $PIDFILE
-	if start-stop-daemon --start --quiet --umask 007 --pidfile $PIDFILE --chuid www:www --exec $DAEMON -- $DAEMON_ARGS
+	chown $USER:$USER $PIDFILE
+	if start-stop-daemon --start --quiet --umask 007 --pidfile $PIDFILE --chuid $USER:$USER --exec $DAEMON -- $DAEMON_ARGS
 	then
 		echo "$NAME."
 	else
