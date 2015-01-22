@@ -287,14 +287,12 @@ local ok,err = red:set('status_'..planter_id, jsonString)
 -- get command from memory
 local command_in_memory,err = red:get('command_'..planter_id)
 
---[[
 if command_in_memory == ngx.null then
     -- default command if command not exists in memory
     ngx.log(ngx.WARN, "command not in memory")
     command_in_memory = cmd_defalut
     red:set("command_"..planter_id,command_in_memory)
 end
-]]--
 
 local command_parse_result  = parse_command(command_in_memory)
 local manual_option         = tonumber(string.sub(command_parse_result['MD'],0,1))
