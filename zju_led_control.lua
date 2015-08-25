@@ -8,6 +8,7 @@ local _const = {
     periodicity   = 'zju_led_p_'   
 }
 
+-- 参数解析函数
 function parse_command(command_source)
     --sample "GPIO=111111&T1=0005&T2=0010&T3=2000&ADC1=100&ADC2=1734&ADC3=69&ADC4=0&ADC5=0&MD=0END"
     -- ADC1 _reserved 
@@ -25,6 +26,7 @@ function parse_command(command_source)
     return commad_parese_table
 end
 
+-- 命令行格式化函数
 function create_command_string(cmd_table)
     -- 初始化
     if cmd_table['GPIO'] == nil then cmd_table['GPIO'] = "000000" end
@@ -44,6 +46,7 @@ function create_command_string(cmd_table)
     return out_string
 end
 
+local cjson = require "cjson"
 local redis = require "resty.redis"
 local red   = redis:new()
 
@@ -67,10 +70,12 @@ end
 
 -- 获取不到参数，退出之
 if not args then ngx.exit(404) end
+
 -- 设备号不存在退出
 local device_id = args.pid
 if not device_id then ngx.exit(404) end
 
+--[[
 local command_in_memory,err = red:get(_const.cmd_prefix..device_id)
 
 if command_in_memory == ngx.null then
@@ -78,17 +83,29 @@ if command_in_memory == ngx.null then
     ngx.log(ngx.WARN, "command not in memory")
     command_in_memory = _const.cmd_defalut
 end
+]]
 
 -- 获取所有周期性列表
 local command_periodicity = red:lrange(_const.periodicity..device_id, 0, -1)
 
-local now_time = os.time()
-local command = nil
-for k, v in command_periodicity do
-    -- result = cjson.decode(v)
-    if result.start_time <= now_time and result.end_time >= now_time then
+local now_time  = os.time()
+local time_info = os.date('*t')
+local command   = nil
+
+for k, v in pairs(command_periodicity) do
+
+    local result = cjson.decode(v)
+
+    time_info.hour    = result.start_hour
+    time_info.minutes = result.start_minutes
+    local start_time  = os.time(time_info) 
+
+    time_info.hour    = result.end_hour
+    time_info.minutes = result.end_minutes
+    local end_time    = os.time(time_info) 
+
+    if start_time <= now_time and end_time >= now_time then
         command = result.cmd
-        -- command = _const.cmd_defalut
     else
         command = _const.cmd_defalut
     end
@@ -98,11 +115,12 @@ end
 if not command then command = _const.cmd_defalut end
 
 -- 优先响应命令，提高接口响应速度，后续做状态存储功能
-ngx.say("pid=12&IO=110011&ADC1=33&ADC2=44&ADC3=55&ADC4=66END");
+ngx.say(command);
 ngx.eof();
 
-local cjson = require "cjson"
+-- 缓存状态
 local jsonString = cjson.encode(args)
 local ok,err = red:set(_const.status_prefix..device_id, jsonString)
 
+-- 将redis对象放入连接池
 local ok,err = red:set_keepalive(10000, 100)
