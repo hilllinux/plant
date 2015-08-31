@@ -4,8 +4,10 @@ ngx.header.content_type = "text/plain";
 local _const = {
     status_prefix = 'zju_led_status_',
     cmd_prefix    = 'zju_led_cmd_',
-    cmd_defalut   = "pid=01&IO=000000&ADC1=11&ADC2=11&ADC3=11&ADC4=11END",
-    periodicity   = 'zju_led_p_'   
+    cmd_defalut   = "pid=12345&IO=000000&ADC1=11&ADC2=11&ADC3=00&ADC4=00END",
+    periodicity   = 'zju_led_p_',
+    control       = 'zju_led_c_',
+    default       = 'zju_led_d_'
 }
 
 -- 参数解析函数
@@ -87,8 +89,12 @@ end
 
 -- 获取所有周期性列表
 local command_periodicity = red:lrange(_const.periodicity..device_id, 0, -1)
+local control_status      = red:get(_const.control..device_id)
+local control_cmd         = red:get(_const.default..device_id)
 
-local now_time  = os.time()
+ngx.log(ngx.ERR, "content:"..cjson.encode(command_periodicity))
+
+local now_time  = tonumber(os.time())
 local time_info = os.date('*t')
 local command   = nil
 
@@ -97,21 +103,24 @@ for k, v in pairs(command_periodicity) do
     local result = cjson.decode(v)
 
     time_info.hour    = result.start_hour
-    time_info.minutes = result.start_minutes
-    local start_time  = os.time(time_info) 
+    time_info.min     = result.start_min
+    local start_time  = tonumber(os.time(time_info)) 
 
     time_info.hour    = result.end_hour
-    time_info.minutes = result.end_minutes
-    local end_time    = os.time(time_info) 
+    time_info.min     = result.end_min
+    local end_time    = tonumber(os.time(time_info))
 
-    if start_time <= now_time and end_time >= now_time then
+    if start_time <= now_time and now_time <= end_time then
         command = result.cmd
+	break
     else
-        command = _const.cmd_defalut
+        command = control_cmd
     end
 
 end
 
+control_status = tonumber(control_status)
+if control_status == 0 then command = control_cmd end
 if not command then command = _const.cmd_defalut end
 
 -- 优先响应命令，提高接口响应速度，后续做状态存储功能
